@@ -1,0 +1,51 @@
+{
+  "Comment": "Retail sales ETL pipeline - extract, transform, load, with per-retailer error handling and retries",
+  "StartAt": "ExtractRetailerFiles",
+  "States": {
+    "ExtractRetailerFiles": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:eu-central-1:ACCOUNT_ID:function:extract-retailer-files",
+      "Comment": "Reads new files from the S3 landing bucket, populated by the automated Outlook connector",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Next": "TransformAndStandardise"
+    },
+    "TransformAndStandardise": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:eu-central-1:ACCOUNT_ID:function:transform-retailer-data",
+      "Comment": "Applies per-retailer schema mapping, date/decimal normalisation, and data-quality validation",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "NotifyTransformFailure"
+        }
+      ],
+      "Next": "LoadToWarehouse"
+    },
+    "LoadToWarehouse": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:eu-central-1:ACCOUNT_ID:function:load-to-s3-athena",
+      "Comment": "Writes partitioned Parquet output to S3 for querying via Amazon Athena",
+      "Next": "PipelineSucceeded"
+    },
+    "PipelineSucceeded": {
+      "Type": "Succeed"
+    },
+    "NotifyTransformFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:eu-central-1:ACCOUNT_ID:etl-pipeline-alerts",
+        "Message.$": "$.error"
+      },
+      "End": true
+    }
+  }
+}
